@@ -1,0 +1,57 @@
+calculateCPM(activitiesCPM:ActivityEntity[]): any {
+    const activityDict = _.keyBy(activitiesCPM, 'name');
+    const graph = new Graph({ directed: true });
+
+    activitiesCPM.forEach(activity => {
+      graph.setNode(activity.name, activity);
+    });
+
+    activitiesCPM.forEach(activity => {
+      activity.predecessors.forEach(predecessor => {
+        graph.setEdge(predecessor, activity.name);
+      });
+    });
+
+    // Calculate ES and EF
+    const topologicallySorted = alg.topsort(graph);
+    topologicallySorted.forEach(node => {
+      const activity = activityDict[node];
+      if (activity.predecessors.length === 0) {
+        activity.es = 0;
+        activity.ef = activity.duration;
+      } else {
+        const maxEF = Math.max(
+          ...activity.predecessors.map(predecessor => activityDict[predecessor].ef)
+        );
+        activity.es = maxEF;
+        activity.ef = maxEF + activity.duration;
+      }
+    });
+
+    // Calculate LS and LF
+    const maxEF = Math.max(...activitiesCPM.map(activity => activity.ef));
+    topologicallySorted.reverse().forEach(node => {
+      const activity = activityDict[node];
+      const successors = graph.successors(node);
+      if (!successors || successors.length === 0) {
+        activity.lf = maxEF;
+        activity.ls = maxEF - activity.duration;
+      } else {
+        const minLS = Math.min(
+          ...successors.map(successor => activityDict[successor].ls)
+        );
+        activity.lf = minLS;
+        activity.ls = minLS - activity.duration;
+      }
+    });
+
+    // Calculate Total Float
+    activitiesCPM.forEach(activity => {
+      activity.float = activity.ls - activity.es;
+    });
+
+    // Identify Critical Path
+    const criticalPath = this.identifyCriticalPath(activitiesCPM);
+
+    return criticalPath;
+  }
