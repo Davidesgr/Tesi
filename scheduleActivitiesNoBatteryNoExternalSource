@@ -1,0 +1,65 @@
+const activityGroups = this.calculateCPM(activitiesCPMNoExternalSource).criticalPath;
+const powerData = (await this.calculateEnergyProduction()).daily_production;
+let day = 0;
+let hour = 9;
+let scheduledActivity = [];
+
+for (let activities of activityGroups) {
+  let remainingDurations = activities.reduce((acc, activity) => {
+    acc[activity.name] = activity.duration;
+    return acc;
+  }, {});
+
+  while (Object.values(remainingDurations).some(duration => duration > 0)) {
+    const unscheduledItems = activities.filter(item => !scheduledActivity.includes(item.name))
+      .map(activity => ({ [activity.name]: activity.energyConsumption }));
+
+    const ksActivities = this.solveKnapsack(powerData[day][hour].powerProductionkW, unscheduledItems);
+
+    if (ksActivities.length > 0) {
+      ksActivities.forEach(ksActivity => {
+        const name = Object.keys(ksActivity)[0];
+        scheduledActivity.push({ [powerData[day][hour].dateTime]: { name, duration: remainingDurations[name] } });
+        remainingDurations[name] -= 1;
+        powerData[day][hour].powerProductionkW -= ksActivity[name];
+      });
+      if (hour < 18) {
+        hour += 1;
+      } else {
+        if (day < powerData.length - 1) {
+          day += 1;
+          hour = 9;
+        } else {
+          throw new BadRequestException();
+        }
+      }
+    } else {
+      if (hour < 18) {
+        hour += 1;
+      } else {
+        if (day < powerData.length - 1) {
+          day += 1;
+          hour = 9;
+        } else {
+          throw new BadRequestException();
+        }
+      }
+    }
+    activities = activities.filter(activity => remainingDurations[activity.name] > 0);
+  }
+}
+
+const entries = scheduledActivity.map(entry => {
+  const [time, activity] = Object.entries(entry)[0];
+  return { time, activity };
+});
+
+const groupedActivities = entries.reduce((acc, { time, activity }) => {
+  if (!acc[activity.name]) {
+    acc[activity.name] = { type: activity.name, start: time, end: time };
+  }
+  acc[activity.name].end = new Date(new Date(time).getTime() + activity.duration * 60 * 60 * 1000);
+  return acc;
+}, {});
+
+return { scheduledActivity: Object.values(groupedActivities) };
