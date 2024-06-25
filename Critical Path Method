@@ -55,3 +55,41 @@ calculateCPM(activitiesCPM:ActivityEntity[]): any {
 
     return criticalPath;
   }
+
+  identifyCriticalPath(activities: ActivityEntity[]): any {
+    const criticalPath = [];
+    const startActivities = activities.filter(activity => activity.float === 0 && activity.predecessors.length === 0);
+
+    const addActivity = (activity: ActivityEntity) => {
+      criticalPath.push(activity.name);
+      const successors = activities.filter(succ => succ.predecessors.includes(activity.name));
+      const nextCritical = successors.find(succ => succ.float === 0);
+      if (nextCritical) {
+        addActivity(nextCritical);
+      }
+    };
+
+    startActivities.forEach(startActivity => addActivity(startActivity));
+
+    return this.formatCriticalPath(activities);
+  }
+
+ formatCriticalPath(activities: ActivityEntity[]): any {
+    const formattedPath = [];
+    const commonPredecessors = _.groupBy(activities, activity => activity.predecessors.join(','));
+
+    Object.keys(commonPredecessors).forEach(key => {
+        const group = commonPredecessors[key];
+        const levelActivities = group.map(activity => {
+            return {
+                name: activity.name,
+                float: activity.float,
+                duration: activity.duration,
+                energyConsumption:activity.energyConsumption
+            };
+        });
+        formattedPath.push(levelActivities);
+    });
+
+    return { criticalPath: formattedPath };
+}
