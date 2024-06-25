@@ -1,0 +1,137 @@
+async scheduleActivitiesBatteryExternalSource() {
+  const activityGroups = this.calculateCPM(activitiesCPMExternalSource).criticalPath;
+  const powerData = (await this.calculateEnergyProduction()).daily_production;
+  let day =0;
+  const openAt = 9;
+  let hour = openAt;
+  var scheduledActivity = [];
+  const closedAt = 18;
+  const kwhPrice = 0.22;
+  let inBatteryLoss = 0.01;
+  let outBatteryLoss = 0.10;
+  let totalEnergyProduced:number = 0;
+  let totalEnergyNeeded:number = 0;
+  let powerCumulativeDaily = [];
+  powerData.forEach((powerHourly) => {
+    let powerCumulativeHourly = 0;
+    for(var i=0;i<openAt;i++)
+      {
+     
+        powerCumulativeHourly += powerHourly[i].powerProductionkW;
+      }
+      powerCumulativeDaily.push(powerCumulativeHourly);
+  });
+  for (let activities of activityGroups) {
+    // Create a map to keep track of remaining durations
+    let remainingDurations = activities.reduce((acc, activity) => {
+      acc[activity.name] = activity.duration;
+      return acc;
+    }, {} as Record<string, number>);
+    let actName = "";
+
+    while (Object.values(remainingDurations).some((duration: number) => duration > 0)) {
+      const a = activities.filter(item => !scheduledActivity[Object.keys(item)[0]]);  
+       let unscheduledItems = [];
+       a.forEach(activity => {
+        totalEnergyNeeded += activity.energyConsumption;
+        unscheduledItems.push({[activity.name]:activity.energyConsumption});
+      });
+      totalEnergyProduced += powerData[day][hour].powerProductionkW+powerCumulativeDaily[day];
+      const ksActivities = this.solveKnapsack(100000000, unscheduledItems);
+      if(ksActivities.length>0)
+        {
+          if (ksActivities) {
+            ksActivities.forEach((ksActivity) => {
+              const name = Object.keys(ksActivity)[0];
+              actName = name;
+              const dateStart = moment.tz(powerData[day][hour].dateTime, "UTC");
+              if(dateStart.hour()>=openAt)
+                {
+                  if(powerCumulativeDaily[day]>(Object.values(ksActivity)[0] as number))
+                    {
+                      powerCumulativeDaily[day] -=Object.values(ksActivity)[0] as number;
+                      powerCumulativeDaily[day] += powerData[day][hour].powerProductionkW;
+                    }else{
+                      let energyFromPanel = (Object.values(ksActivity)[0] as number)-powerCumulativeDaily[day];
+                      if((powerData[day][hour].powerProductionkW-energyFromPanel)-((powerData[day][hour].powerProductionkW-energyFromPanel)*inBatteryLoss)>0)
+                        {
+                          powerCumulativeDaily[day] += (powerData[day][hour].powerProductionkW-energyFromPanel)-((powerData[day][hour].powerProductionkW-energyFromPanel)*inBatteryLoss);
+                        }else{
+                          powerCumulativeDaily[day] += 0;
+                        }
+                      powerData[day][hour].powerProductionkW = 0;
+                    }
+                  scheduledActivity.push({[powerData[day][hour].dateTime]: {name:name,duration:(Object.values(remainingDurations)[0] as number)}});
+                  remainingDurations[name] -= 1; // Decrease the duration
+                  }
+            });
+            if(hour<closedAt)
+              {
+                hour += 1;
+              }else{
+                if(day<powerData.length-1)
+                  {
+                    day +=1;
+                    hour = openAt;
+                  }else{
+                    //scheduledActivity = [];
+                    throw new BadRequestException()
+                  }
+              }
+          }
+        }else{
+          if(hour<closedAt)
+            {
+              hour += 1;
+            }else{
+              if(day<powerData.length-1)
+                {
+              day +=1;
+              hour = openAt;
+                }else{
+                  scheduledActivity = [];
+                  throw new BadRequestException()
+                }
+            }
+        }
+      // Remove completed activities from the list
+      activities = activities.filter(activity => remainingDurations[activity.name] > 0);
+    }
+  }
+
+
+
+// Convert data to an array of entries
+const entries = scheduledActivity.map(entry => {
+  const [time, activity] = Object.entries(entry)[0];
+  return { time, activity };
+});
+
+// Function to group activities
+const groupActivities = (entries) => {
+  const activityMap = {};
+
+  // Populate the activity map
+  entries.forEach(({ time, activity }, index) => {
+      if (!activityMap[activity.name]) {
+          activityMap[activity.name] = { type: activity.name, start: time, end: time};
+      }
+
+      activityMap[activity.name].end = new Date(new Date(time).getTime() + activity.duration * 60 * 60 * 1000);
+
+  });
+
+  // Convert the activity map to an array
+  return Object.values(activityMap);
+};
+const groupedActivities = groupActivities(entries);
+
+if(totalEnergyNeeded>totalEnergyProduced)
+  {
+    const energyNeeded:number = totalEnergyNeeded-totalEnergyProduced;
+    const price:number = energyNeeded*kwhPrice;
+    return {scheduledActivity:groupedActivities,totalEnergyProduced:totalEnergyProduced,totalEnergyNeeded:totalEnergyNeeded,kwhPrice:kwhPrice,price:price,message:"Ti servono "+energyNeeded+" kw rispetto a "+totalEnergyProduced+" kW prodotti. Pagherai "+price+" euro considerando "+kWhPrice+" euro a kWh"};
+  }else{
+    return {scheduledActivity:groupedActivities,totalEnergyProduced:totalEnergyProduced,totalEnergyNeeded:totalEnergyNeeded,message:"Non serve energia dall'esterno"};
+  }
+}
