@@ -1,0 +1,89 @@
+def simplified_solis(apparent_elevation, aod700=0.1, precipitable_water=1.,
+                 pressure=101325., dni_extra=1364.):
+"""
+Calculate the clear sky GHI, DNI, and DHI according to the
+simplified Solis model.
+
+Reference [1]_ describes the accuracy of the model as being 15, 20,
+and 18 W/m^2 for the beam, global, and diffuse components. Reference
+[2]_ provides comparisons with other clear sky models.
+
+Parameters
+----------
+apparent_elevation : numeric
+    The apparent elevation of the sun above the horizon (deg).
+
+aod700 : numeric, default 0.1
+    The aerosol optical depth at 700 nm (unitless).
+    Algorithm derived for values between 0 and 0.45.
+
+precipitable_water : numeric, default 1.0
+    The precipitable water of the atmosphere (cm).
+    Algorithm derived for values between 0.2 and 10 cm.
+    Values less than 0.2 will be assumed to be equal to 0.2.
+
+pressure : numeric, default 101325.0
+    The atmospheric pressure (Pascals).
+    Algorithm derived for altitudes between sea level and 7000 m,
+    or 101325 and 41000 Pascals.
+
+dni_extra : numeric, default 1364.0
+    Extraterrestrial irradiance. The units of ``dni_extra``
+    determine the units of the output.
+
+Returns
+-------
+clearsky : DataFrame (if Series input) or OrderedDict of arrays
+    DataFrame/OrderedDict contains the columns/keys
+    ``'dhi', 'dni', 'ghi'``.
+
+References
+----------
+.. [1] P. Ineichen, "A broadband simplified version of the
+   Solis clear sky model," Solar Energy, 82, 758-762 (2008).
+
+.. [2] P. Ineichen, "Validation of models that estimate the clear
+   sky global and beam solar irradiance," Solar Energy, 132,
+   332-344 (2016).
+"""
+
+p = pressure
+
+w = precipitable_water
+
+# algorithm fails for pw < 0.2
+w = np.maximum(w, 0.2)
+
+# this algorithm is reasonably fast already, but it could be made
+# faster by precalculating the powers of aod700, the log(p/p0), and
+# the log(w) instead of repeating the calculations as needed in each
+# function
+
+i0p = _calc_i0p(dni_extra, w, aod700, p)
+
+taub = _calc_taub(w, aod700, p)
+b = _calc_b(w, aod700)
+
+taug = _calc_taug(w, aod700, p)
+g = _calc_g(w, aod700)
+
+taud = _calc_taud(w, aod700, p)
+d = _calc_d(aod700, p)
+
+# this prevents the creation of nans at night instead of 0s
+# it's also friendly to scalar and series inputs
+sin_elev = np.maximum(1.e-30, np.sin(np.radians(apparent_elevation)))
+
+dni = i0p * np.exp(-taub/sin_elev**b)
+ghi = i0p * np.exp(-taug/sin_elev**g) * sin_elev
+dhi = i0p * np.exp(-taud/sin_elev**d)
+
+irrads = OrderedDict()
+irrads['ghi'] = ghi
+irrads['dni'] = dni
+irrads['dhi'] = dhi
+
+if isinstance(dni, pd.Series):
+    irrads = pd.DataFrame.from_dict(irrads)
+
+return irrads
